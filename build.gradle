@@ -1,0 +1,55 @@
+import groovy.xml.XmlUtil
+
+plugins {
+    id 'base'
+    id 'maven-publish'
+}
+
+def coordinate = { String environmentName, String propertyName, String fallback ->
+    System.getenv(environmentName) ?: providers.gradleProperty(propertyName).getOrElse(fallback)
+}
+group = coordinate('GROUP', 'group', 'com.dz.sdk')
+version = coordinate('VERSION', 'version', '1.0.0')
+def binaryArtifactId = coordinate('ARTIFACT', 'artifact', 'drama-sdk')
+def binaryAar = file('drama-sdk.aar')
+def dependencyPom = file('drama-sdk.pom')
+
+tasks.register('verifyBinaryInputs') {
+    inputs.files(binaryAar, dependencyPom)
+    doLast {
+        [binaryAar, dependencyPom].each { input ->
+            if (!input.isFile()) throw new GradleException("Missing binary input: ${input.name}")
+        }
+    }
+}
+
+publishing {
+    publications {
+        dramaSdk(MavenPublication) {
+            groupId = project.group.toString()
+            artifactId = binaryArtifactId
+            version = project.version.toString()
+            artifact(binaryAar) { builtBy tasks.named('verifyBinaryInputs') }
+            pom {
+                name = 'Drama SDK'
+                description = 'Binary Android content SDK'
+                packaging = 'aar'
+                withXml {
+                    if (!dependencyPom.isFile()) throw new GradleException('Missing drama-sdk.pom')
+                    def source = new XmlParser(false, false).parse(dependencyPom)
+                    ['dependencies', 'dependencyManagement', 'repositories'].each { section ->
+                        source.children().findAll { it instanceof Node && it.name().toString().tokenize(':').last() == section }.each {
+                            asNode().append(new XmlParser(false, false).parseText(XmlUtil.serialize(it)))
+                        }
+                    }
+                }
+            }
+        }
+    }
+    repositories {
+        maven {
+            name = 'verification'
+            url = layout.buildDirectory.dir('repo').get().asFile.toURI()
+        }
+    }
+}
